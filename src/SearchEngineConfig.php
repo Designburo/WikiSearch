@@ -134,6 +134,11 @@ class SearchEngineConfig {
 				$value = true;
 			}
 
+			if ( $key === 'base query' ) {
+				$value = self::parseIfNeeded( $value );
+				var_dump( $value );
+			}
+
 			$search_parameters[$key] = $value;
 		}
 
@@ -175,7 +180,6 @@ class SearchEngineConfig {
 				// This is a "facet property", since its key is not a valid search parameter
 				$facet_properties[] = $parameter;
 			} else {
-				// This is a "search term parameter"
 				$search_parameters[$key] = isset( $key_value_pair[1] ) ? $key_value_pair[1] : true;
 			}
 		}
@@ -225,7 +229,7 @@ class SearchEngineConfig {
 
 		if ( isset( $search_parameters["base query"] ) ) {
 			try {
-				$query_processor = new SMWQueryProcessor( $search_parameters["base query"] );
+				$query_processor = new SMWQueryProcessor( self::parseIfNeeded( $search_parameters["base query"] ) );
 				$query_processor->toElasticSearchQuery();
 			} catch ( \MWException $exception ) {
 				Logger::getLogger()->alert( 'Exception caught while trying to parse a base query: {e}', [
@@ -236,6 +240,29 @@ class SearchEngineConfig {
 				throw new \InvalidArgumentException( "Invalid base query" );
 			}
 		}
+	}
+
+	/**
+	 * @param string $value
+	 *
+	 * @return string
+	 */
+	private static function parseIfNeeded( string $value, bool $parseOnce = false ): string {
+		$parser = MediaWikiServices::getInstance()->getParser();
+		if ( strpos( $value, "nowiki" ) !== false ) {
+			echo '<pre>';
+			var_dump( $value );
+			$value = $parser->recursiveTagParseFully( $value );
+			var_dump( $value );
+			if ( !$parseOnce ) {
+				$value = $parser->recursivePreprocess( $value );
+			}
+			var_dump( $value );
+			$value = trim( str_replace( [ '<p>', '</p>' ], '', $value ) );
+			var_dump( $value );
+			echo '</pre>';
+		}
+		return $value;
 	}
 
 	/**
@@ -262,7 +289,7 @@ class SearchEngineConfig {
 		if ( !isset( $this->search_parameters[$parameter] ) ) {
 			return false;
 		}
-
+		// Is the code below even used?
 		$search_parameter_value_raw = $this->search_parameters[$parameter];
 
 		if ( empty( $search_parameter_value_raw ) ) {
@@ -435,6 +462,9 @@ class SearchEngineConfig {
 
 		// Insert this object's search parameters
 		foreach ( $this->search_parameters as $key => $value ) {
+			if ( $key === 'base query' ) {
+				$value = self::parseIfNeeded( $value, true );
+			}
 			$database->insert(
 				"search_parameters",
 				[
