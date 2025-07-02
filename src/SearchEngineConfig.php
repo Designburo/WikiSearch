@@ -150,7 +150,6 @@ class SearchEngineConfig {
 
 			$search_parameters[$key] = $value;
 		}
-		var_dump( __METHOD__ );
 		try {
 			return new SearchEngineConfig( $page, $search_parameters, $facet_properties, $result_properties );
 		} catch ( \InvalidArgumentException $e ) {
@@ -264,7 +263,7 @@ class SearchEngineConfig {
 	 *
 	 * @return string
 	 */
-	private static function parseBaseQuery( string $value, string $parseType = self::PARSE_BASE_QUERY_FULL ): string {
+	private function parseBaseQuery( string $value, string $parseType = self::PARSE_BASE_QUERY_FULL ): string {
 		// $parser = MediaWikiServices::getInstance()->getParser();
 		$parser = MediaWikiServices::getInstance()->getParserFactory()->create();
 		$parser->setOptions(
