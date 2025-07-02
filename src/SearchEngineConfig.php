@@ -21,7 +21,9 @@
 
 namespace WikiSearch;
 
+use MediaWiki\Context\RequestContext;
 use MediaWiki\MediaWikiServices;
+use MediaWiki\Parser\ParserOptions;
 use Title;
 use Wikimedia\Rdbms\DBConnRef;
 use WikiSearch\QueryEngine\Sort\PropertySort;
@@ -46,6 +48,14 @@ class SearchEngineConfig {
 		"result template"		 => [ "type" => "string" ],
 		"fallback sorts"         => [ "type" => "sortlist" ],
 	];
+
+	private const PARSE_BASE_QUERY_FULL = 'full';
+
+	private const PARSE_BASE_QUERY_WRITE_STORAGE = 'write-storage';
+
+	private const PARSE_BASE_QUERY_READ_STORAGE = 'read-storage';
+
+	private static bool $isParsed = false;
 
 	/**
 	 * @var Title
@@ -135,13 +145,12 @@ class SearchEngineConfig {
 			}
 
 			if ( $key === 'base query' ) {
-				$value = self::parseIfNeeded( $value );
-				var_dump( $value );
+				$value = self::parseBaseQuery( $value, self::PARSE_BASE_QUERY_READ_STORAGE  );
 			}
 
 			$search_parameters[$key] = $value;
 		}
-
+		var_dump( __METHOD__ );
 		try {
 			return new SearchEngineConfig( $page, $search_parameters, $facet_properties, $result_properties );
 		} catch ( \InvalidArgumentException $e ) {
@@ -164,7 +173,8 @@ class SearchEngineConfig {
 		$facet_properties = $result_properties = $search_parameters = [];
 
 		foreach ( $parameters as $parameter ) {
-			if ( strlen( $parameter ) === 0 ) { continue;
+			if ( strlen( $parameter ) === 0 ) {
+				continue;
 			}
 
 			if ( $parameter[0] === "?" ) {
@@ -186,7 +196,7 @@ class SearchEngineConfig {
 
 		$facet_properties = array_unique( $facet_properties );
 		$result_properties = array_unique( $result_properties );
-
+		var_dump( __METHOD__ );
 		return new SearchEngineConfig( $title, $search_parameters, $facet_properties, $result_properties );
 	}
 
@@ -229,7 +239,13 @@ class SearchEngineConfig {
 
 		if ( isset( $search_parameters["base query"] ) ) {
 			try {
-				$query_processor = new SMWQueryProcessor( self::parseIfNeeded( $search_parameters["base query"] ) );
+				var_dump( 'Calling parseBaseQuery' );
+				$query_processor = new SMWQueryProcessor(
+					self::parseBaseQuery(
+						$search_parameters["base query"],
+						self::PARSE_BASE_QUERY_FULL
+					)
+				);
 				$query_processor->toElasticSearchQuery();
 			} catch ( \MWException $exception ) {
 				Logger::getLogger()->alert( 'Exception caught while trying to parse a base query: {e}', [
@@ -244,24 +260,68 @@ class SearchEngineConfig {
 
 	/**
 	 * @param string $value
+	 * @param string $parseType
 	 *
 	 * @return string
 	 */
-	private static function parseIfNeeded( string $value, bool $parseOnce = false ): string {
-		$parser = MediaWikiServices::getInstance()->getParser();
-		if ( strpos( $value, "nowiki" ) !== false ) {
-			echo '<pre>';
-			var_dump( $value );
-			$value = $parser->recursiveTagParseFully( $value );
-			var_dump( $value );
-			if ( !$parseOnce ) {
-				$value = $parser->recursivePreprocess( $value );
-			}
-			var_dump( $value );
-			$value = trim( str_replace( [ '<p>', '</p>' ], '', $value ) );
-			var_dump( $value );
-			echo '</pre>';
+	private static function parseBaseQuery( string $value, string $parseType = self::PARSE_BASE_QUERY_FULL ): string {
+		// $parser = MediaWikiServices::getInstance()->getParser();
+		$parser = MediaWikiServices::getInstance()->getParserFactory()->create();
+		$parser->setOptions(
+			ParserOptions::newFromContext( RequestContext::getMain() )
+		);
+		echo "<pre>";
+		var_dump( $value );
+		switch ( $parseType ) {
+			case 'full':
+				if ( strpos( $value, "nowiki" ) !== false ) {
+					$value = $parser->recursiveTagParseFully( $value );
+					$value = $parser->recursivePreprocess( $value );
+					$value = trim( str_replace( [ '<p>', '</p>' ], '', $value ) );
+				}
+				break;
+			case "write-storage":
+				if ( strpos( $value, "nowiki" ) !== false ) {
+					self::$isParsed = true;
+					$value = $parser->recursiveTagParseFully( $value );
+					$value = trim(
+						str_replace(
+							[
+								'<p>',
+								'</p>'
+							],
+							'',
+							$value
+						)
+					);
+				} else {
+					self::$isParsed = false;
+				}
+				break;
+			case "read-storage":
+
+				if ( self::$isParsed ) {
+					try {
+						$value = $parser->recursivePreprocess( $value );
+					} catch ( \InvalidArgumentException $exception ) {
+						// do nothing
+					}
+					$value = trim(
+						str_replace(
+							[
+								'<p>',
+								'</p>'
+							],
+							'',
+							$value
+						)
+					);
+				}
+
+				break;
 		}
+		var_dump( $parseType, $value );
+		echo "</pre>";
 		return $value;
 	}
 
@@ -463,7 +523,7 @@ class SearchEngineConfig {
 		// Insert this object's search parameters
 		foreach ( $this->search_parameters as $key => $value ) {
 			if ( $key === 'base query' ) {
-				$value = self::parseIfNeeded( $value, true );
+				$value = self::parseBaseQuery( $value, self::PARSE_BASE_QUERY_WRITE_STORAGE );
 			}
 			$database->insert(
 				"search_parameters",
